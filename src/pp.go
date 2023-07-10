@@ -31,6 +31,7 @@ func init() {
 }
 
 const hashSize int = 160
+const successorSize int = 5
 
 type NodeInformation struct {
 	Addr   string
@@ -47,7 +48,7 @@ type Node struct {
 	dataLock        sync.RWMutex
 	fingertable     [hashSize]NodeInformation
 	tableLock       sync.RWMutex
-	successor       NodeInformation
+	successorList   [successorSize]NodeInformation
 	successorLock   sync.RWMutex
 	predecessor     NodeInformation
 	predecessorLock sync.RWMutex
@@ -75,6 +76,7 @@ func GetClient(addr string) (*rpc.Client, error) {
 	client = rpc.NewClient(conn)
 	return client, err
 }
+
 func RemoteCall(addr string, method string, args interface{}, reply interface{}) error {
 	client, err := GetClient(addr)
 	if err != nil {
@@ -141,12 +143,13 @@ func (node *Node) Run() {
 }
 func (node *Node) Create() {
 	node.tableLock.Lock()
-	node.fingertable[0] = node.Addr
+	node.fingertable[0].Addr = node.Addr.Addr
+	node.fingertable[0].HashId = gethash(node.fingertable[0].Addr)
 	node.tableLock.Unlock()
 	logrus.Info("[Lock]successorLock:", node.Addr)
 	node.successorLock.Lock()
-	node.successor.Addr = node.Addr.Addr
-	node.successor.HashId = gethash(node.successor.Addr)
+	node.successorList[0].Addr = node.Addr.Addr
+	node.successorList[0].HashId = gethash(node.successorList[0].Addr)
 	node.successorLock.Unlock()
 	node.Mantain()
 }
@@ -155,9 +158,12 @@ var base = big.NewInt(2)
 var mod = new(big.Int).Exp(base, big.NewInt(160), nil)
 
 func (node *Node) Check() bool {
+	if !node.online {
+		return true
+	}
 	var suc, pre NodeInformation
-	RemoteCall(node.successor.Addr, "Node.RPCGetPredecessor", "", &suc)
-	RemoteCall(node.predecessor.Addr, "Node.RPCGetSuccessor", "", &pre)
+	RemoteCall(node.successorList[0].Addr, "Node.RPCGetPredecessor", "", &suc)
+	RemoteCall(node.predecessor.Addr, "Node.RPCGetFirstSuccessor", "", &pre)
 	if suc.HashId.Cmp(node.Addr.HashId) != 0 {
 		return false
 	}
@@ -169,57 +175,95 @@ func (node *Node) Check() bool {
 func (node *Node) Mantain() { //不知道写啥，只知道是每个周期都要干的事情
 	go func() {
 		for node.online {
-			logrus.Info("[Before] Stablize: ", node.Addr, node.successor, node.predecessor)
 			time.Sleep(MaintainTime)
-			var suc, pre NodeInformation
-			node.RPCGetSuccessor("", &suc)
-			err := RemoteCall(suc.Addr, "Node.RPCGetPredecessor", "", &pre)
-			if err != nil {
-				logrus.Error("[error] Stabilize error: ", err)
-				continue
-			}
-			succ := suc
-			if pre.Addr != "" && in(node.Addr.HashId, suc.HashId, pre.HashId, false, false) {
-				suc = pre
-			}
-			logrus.Info("[Lock]successorLock:", node.Addr)
-			node.successorLock.Lock()
-			node.successor.Addr = suc.Addr
-			node.successor.HashId = gethash(node.successor.Addr)
-			node.successorLock.Unlock()
-			node.tableLock.Lock()
-			node.fingertable[0] = suc
-			node.tableLock.Unlock()
-			err = RemoteCall(suc.Addr, "Node.RPCNotify", node.Addr, nil)
-			if err != nil {
-				logrus.Error("[error] Stabilize error: ", err)
-			}
-			logrus.Info("[running] Stablize running: ", node.Addr, node.predecessor, node.successor, succ, pre)
+			node.Stablize()
 		}
 		logrus.Info("[end]Maintain end: ", node.Addr)
 	}()
 
 	go func() {
 		for node.online {
-			logrus.Info("[Before] Finger fix: ", node.Addr, node.successor, node.predecessor)
 			time.Sleep(MaintainTime)
-			ind := node.fixing
-			var reply NodeInformation
-			temp := new(big.Int).Exp(base, big.NewInt(int64(ind)), nil)
-			ttemp := new(big.Int).Add(node.Addr.HashId, temp)
-			tttemp := new(big.Int).Mod(ttemp, mod)
-			node.RPCFindSuccessor(NodeInformation{"", tttemp}, &reply)
-			node.tableLock.Lock()
-			node.fingertable[ind] = reply
-			node.tableLock.Unlock()
-			node.fixing++
-			if node.fixing == 160 {
-				node.fixing = 1
-			}
-			logrus.Info("[running] Finger fix: ", node.Addr, " ind: ", ind, " temp: ", tttemp, " reply: ", reply, node.successor, node.predecessor)
+			node.FixFinger()
 		}
 		logrus.Info("[end]Finger fix end: ", node.Addr)
 	}()
+
+	go func() {
+		for node.online {
+			time.Sleep(MaintainTime)
+			node.ChangePredecessor()
+		}
+		logrus.Info("[end]ChangePredecessor end: ", node.Addr)
+	}()
+}
+func (node *Node) Stablize() error {
+	logrus.Info("[Before] Stablize: ", node.Addr, node.successorList, node.predecessor)
+	var suc, pre NodeInformation
+	node.RPCGetFirstSuccessor("", &suc)
+	err := RemoteCall(suc.Addr, "Node.RPCGetPredecessor", "", &pre)
+	if err != nil {
+		logrus.Error("[error] Stabilize error: ", err)
+		return err
+	}
+	succ := suc
+	if pre.Addr != "" && in(node.Addr.HashId, suc.HashId, pre.HashId, false, false) {
+		suc = pre
+	}
+	logrus.Info("[Lock]successorLock:", node.Addr)
+	var tempsuc [successorSize]NodeInformation
+	err = RemoteCall(suc.Addr, "Node.RPCGetSuccessor", "", &tempsuc)
+	if err != nil {
+		logrus.Error("[error] Stablize error: ", err)
+		return err
+	}
+	node.successorLock.Lock()
+	node.successorList[0].Addr = suc.Addr
+	node.successorList[0].HashId = gethash(node.successorList[0].Addr)
+	for i := 1; i < successorSize; i++ {
+		node.successorList[i].Addr = tempsuc[i-1].Addr
+		node.successorList[i].HashId = gethash(node.successorList[i].Addr)
+	}
+	node.successorLock.Unlock()
+	node.tableLock.Lock()
+	node.fingertable[0].Addr = suc.Addr
+	node.fingertable[0].HashId = gethash(node.fingertable[0].Addr)
+	node.tableLock.Unlock()
+	err = RemoteCall(suc.Addr, "Node.RPCNotify", node.Addr, nil)
+	if err != nil {
+		logrus.Error("[error] Stablize error: ", err)
+	}
+	logrus.Info("[running] Stablize: ", node.Addr, node.predecessor, node.successorList, succ, pre)
+	return err
+}
+
+func (node *Node) FixFinger() error {
+	logrus.Info("[Before] Finger fix: ", node.Addr, node.successorList, node.predecessor)
+	ind := node.fixing
+	var reply NodeInformation
+	temp := new(big.Int).Exp(base, big.NewInt(int64(ind)), nil)
+	ttemp := new(big.Int).Add(node.Addr.HashId, temp)
+	tttemp := new(big.Int).Mod(ttemp, mod)
+	node.RPCFindSuccessor(NodeInformation{"", tttemp}, &reply)
+	node.tableLock.Lock()
+	node.fingertable[ind].Addr = reply.Addr
+	node.fingertable[ind].HashId = gethash(node.fingertable[ind].Addr)
+	node.tableLock.Unlock()
+	node.fixing++
+	if node.fixing == 160 {
+		node.fixing = 1
+	}
+	logrus.Info("[running] Finger fix: ", node.Addr, " ind: ", ind, " temp: ", tttemp, " reply: ", reply, node.successorList, node.predecessor)
+	return nil
+}
+
+func (node *Node) ChangePredecessor() error {
+	if node.predecessor.Addr != "" && !node.Ping(node.predecessor.Addr) {
+		node.predecessorLock.Lock()
+		node.predecessor.Addr = ""
+		node.predecessorLock.Unlock()
+	}
+	return nil
 }
 
 func (node *Node) RPCPing(_ string, _ *struct{}) error {
@@ -233,15 +277,26 @@ func (node *Node) RPCNotify(addr NodeInformation, _ *struct{}) error {
 		node.predecessor.Addr = addr.Addr
 		node.predecessor.HashId = gethash(node.predecessor.Addr)
 		node.predecessorLock.Unlock()
-		logrus.Info("[running] Notify running: ", node.Addr, node.predecessor, node.successor)
+		logrus.Info("[running] Notify running: ", node.Addr, node.predecessor, node.successorList)
 	}
 	return nil
 }
 
-func (node *Node) RPCGetSuccessor(_ string, reply *NodeInformation) error {
+func (node *Node) RPCGetFirstSuccessor(_ string, reply *NodeInformation) error {
+	for i := 0; i < successorSize; i++ {
+		if node.Ping(node.successorList[i].Addr) {
+			*reply = node.successorList[i]
+			logrus.Info("[Success]GetFirstSuccessor:", node.Addr, "->", i, "->", node.successorList[i])
+			return nil
+		}
+	}
+	return errors.New("[error] Can't find first successor")
+}
+
+func (node *Node) RPCGetSuccessor(_ string, reply *[successorSize]NodeInformation) error {
 	logrus.Info("[Lock]successorRLock:", node.Addr)
 	node.successorLock.RLock()
-	*reply = node.successor
+	*reply = node.successorList
 	node.successorLock.RUnlock()
 	return nil
 }
@@ -256,9 +311,9 @@ func (node *Node) RPCGetPredecessor(_ string, reply *NodeInformation) error {
 
 func (node *Node) RPCFindSuccessor(addr NodeInformation, reply *NodeInformation) error {
 	var pre, suc NodeInformation
-	err := node.RPCGetSuccessor("", &suc)
+	err := node.RPCGetFirstSuccessor("", &suc)
 	if err != nil {
-		logrus.Error("[error] FindSuccessor when RPCGetSuccessor error: ", node.Addr.Addr, " ", err)
+		logrus.Error("[error] FindSuccessor when RPCGetFirstSuccessor error: ", node.Addr.Addr, " ", err)
 		return err
 	}
 	if in(node.Addr.HashId, suc.HashId, addr.HashId, false, true) {
@@ -270,20 +325,25 @@ func (node *Node) RPCFindSuccessor(addr NodeInformation, reply *NodeInformation)
 		logrus.Error("[error] FindSuccessor when RPCFindPredecessor error: ", node.Addr.Addr, " ", addr, " ", err)
 		return err
 	}
-	return RemoteCall(pre.Addr, "Node.RPCGetSuccessor", "", reply)
+	return RemoteCall(pre.Addr, "Node.RPCGetFirstSuccessor", "", reply)
 
 }
 func (node *Node) RPCFindPredecessor(addr NodeInformation, reply *NodeInformation) error {
-	if in(node.Addr.HashId, node.successor.HashId, addr.HashId, false, true) {
+	var tempsuc NodeInformation
+	err := node.RPCGetFirstSuccessor("", &tempsuc)
+	if err != nil {
+		return err
+	}
+	if in(node.Addr.HashId, tempsuc.HashId, addr.HashId, false, true) {
 		*reply = node.Addr
 		return nil
 	}
 	var tar NodeInformation
 	node.RPCFindClosePrecedingFinger(addr, &tar)
 	var suc NodeInformation
-	err := RemoteCall(tar.Addr, "Node.RPCGetSuccessor", "", &suc)
+	err = RemoteCall(tar.Addr, "Node.RPCGetFirstSuccessor", "", &suc)
 	if err != nil {
-		logrus.Error("[error] RPCFindPredecessor when GetSuccessor error: ", node.Addr.Addr, " ", tar.Addr, " ", err)
+		logrus.Error("[error] RPCFindPredecessor when RPCGetFirstSuccessor error: ", node.Addr.Addr, " ", tar.Addr, " ", err)
 		return err
 	}
 	for !in(tar.HashId, suc.HashId, addr.HashId, false, true) {
@@ -292,7 +352,7 @@ func (node *Node) RPCFindPredecessor(addr NodeInformation, reply *NodeInformatio
 			logrus.Error("[error] RPCFindPredecessor when FindClosePrecedingFinger error: ", node.Addr.Addr, " ", tar.Addr, " ", err)
 			return err
 		}
-		err = RemoteCall(tar.Addr, "Node.RPCGetSuccessor", "", &suc)
+		err = RemoteCall(tar.Addr, "Node.RPCGetFirstSuccessor", "", &suc)
 		if err != nil {
 			logrus.Error("[error] RPCFindPredecessor when GetSuccessor error: ", node.Addr.Addr, " ", tar.Addr, " ", err)
 			return err
@@ -323,6 +383,10 @@ func (node *Node) Ping(addr string) bool {
 }
 func (node *Node) Join(addr string) (check bool) {
 	fmt.Println(node.Addr.Addr, addr)
+	if !node.Ping(addr) {
+		logrus.Error("[error] Join: addr shutdown", node.Addr.Addr, addr)
+		return false
+	}
 	var reply NodeInformation
 	err := RemoteCall(addr, "Node.RPCFindSuccessor", node.Addr, &reply)
 	if err != nil {
@@ -336,9 +400,18 @@ func (node *Node) Join(addr string) (check bool) {
 	node.predecessor.HashId = gethash(node.predecessor.Addr)
 	node.predecessorLock.Unlock()
 	logrus.Info("[Lock]successorLock:", node.Addr)
+	var tempsuc [successorSize]NodeInformation
+	err = RemoteCall(reply.Addr, "Node.RPCGetSuccessor", "", &tempsuc)
+	if err != nil {
+		return false
+	}
 	node.successorLock.Lock()
-	node.successor.Addr = reply.Addr
-	node.successor.HashId = gethash(node.successor.Addr)
+	node.successorList[0].Addr = reply.Addr
+	node.successorList[0].HashId = gethash(node.successorList[0].Addr)
+	for i := 1; i < successorSize; i++ {
+		node.successorList[i].Addr = tempsuc[i-1].Addr
+		node.successorList[i].HashId = gethash(node.successorList[i].Addr)
+	}
 	node.successorLock.Unlock()
 	node.Mantain()
 	return true
@@ -357,7 +430,7 @@ func (node *Node) Quit() {
 	node.onlineLock.Unlock()
 	logrus.Info("[Success] Quit: ", node.Addr.Addr)
 	node.quit = make(chan bool, 1)
-	logrus.Info("[Final] From: ", node.Addr, " Successor: ", node.successor, " Predecessor: ", node.predecessor)
+	logrus.Info("[Final] From: ", node.Addr.Addr, " Successor: ", node.successorList, " Predecessor: ", node.predecessor.Addr)
 }
 func (node *Node) ForceQuit() {
 	if !node.online {
