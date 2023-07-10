@@ -146,15 +146,27 @@ func main() {
 		}
 		nodesInNetwork = append(nodesInNetwork, nextJoinNode)
 		nextJoinNode++
-		time.Sleep(time.Second)
+		time.Sleep(time.Second * 2)
 	}
-	time.Sleep(time.Second * 10)
+	time.Sleep(time.Second * 20)
+	go nodes[0].Quit()
+	go nodes[10].Quit()
+	go nodes[20].Quit()
+	go nodes[30].Quit()
+	go nodes[40].Quit()
+	go nodes[50].Quit()
+	go nodes[60].Quit()
+	go nodes[70].Quit()
+	go nodes[80].Quit()
+	go nodes[90].Quit()
+	time.Sleep(time.Second * 20)
 	for i := 0; i < length; i++ {
 		flag := nodes[i].Check()
 		fmt.Println("Check ", i, " ", flag)
 	}
 	for i := 0; i < length; i++ {
-		nodes[i].Quit()
+		go nodes[i].Quit()
 	}
-	time.Sleep(time.Second)
+
+	time.Sleep(time.Second * 5)
 }
