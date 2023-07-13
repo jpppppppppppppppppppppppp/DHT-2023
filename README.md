@@ -1,6 +1,6 @@
 # Distributed Hash Table - PPCA 2023  Report
 
-## Some Detials
+## Some Detials in debug
 * When trying to quit a node, in order to maintain the it's successor's data and backup, just need to make successor's predecessor equal to "" and add all the k-v pairs in backup into it's dataset. By the predecessor's stablizing to notify its successor to back it up.
 
 * When fixing bugs, please confirm if it is reason for the time delay, and then print as much debugging information as possible.
