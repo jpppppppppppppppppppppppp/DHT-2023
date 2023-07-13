@@ -8,5 +8,6 @@
 ## Chord
 ### 文件结构
 
-src/pp.go:定义了和Chord算法相关的所有实现
-hash/hash.go:哈希部分
+* src/pp.go:定义了和Chord算法相关的所有实现
+
+* hash/hash.go:哈希部分
