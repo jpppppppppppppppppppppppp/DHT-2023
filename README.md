@@ -63,3 +63,5 @@ The current test procedure is:
   1. One node quits.
   2. After the node quitting from the network, there is **80ms of sleep time**. And then **20 key-value pairs will be queried for**.
 
+## Some Detials
+When trying to quit a node, in order to maintain the it's successor's data and backup, just need to make successor's predecessor equal to "" and add all the k-v pairs in backup into it's dataset. By the predecessor's stablizing to notify its successor to back it up.

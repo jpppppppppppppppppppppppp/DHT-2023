@@ -31,7 +31,7 @@ func init() {
 }
 
 const hashSize int = 160
-const successorSize int = 5
+const successorSize int = 10
 
 type NodeInformation struct {
 	Addr   string
@@ -46,6 +46,8 @@ type Node struct {
 	server          *rpc.Server
 	data            map[string]string
 	dataLock        sync.RWMutex
+	backup          map[string]string
+	backupLock      sync.RWMutex
 	fingertable     [hashSize]NodeInformation
 	tableLock       sync.RWMutex
 	successorList   [successorSize]NodeInformation
@@ -96,7 +98,6 @@ func RemoteCall(addr string, method string, args interface{}, reply interface{})
 func (node *Node) Init(addr string) {
 	node.Addr.Addr = addr
 	node.Addr.HashId = gethash(addr)
-	fmt.Println(node.Addr)
 	node.onlineLock.Lock()
 	defer node.onlineLock.Unlock()
 	node.online = false
@@ -104,6 +105,9 @@ func (node *Node) Init(addr string) {
 	node.dataLock.Lock()
 	defer node.dataLock.Unlock()
 	node.data = make(map[string]string)
+	node.backupLock.Lock()
+	defer node.backupLock.Unlock()
+	node.backup = make(map[string]string)
 	node.quit = make(chan bool, 1)
 	node.fixing = 1
 }
@@ -262,6 +266,32 @@ func (node *Node) ChangePredecessor() error {
 		node.predecessorLock.Lock()
 		node.predecessor.Addr = ""
 		node.predecessorLock.Unlock()
+		node.backupLock.Lock()
+		node.dataLock.Lock()
+		for k, v := range node.backup {
+			node.data[k] = v
+		}
+		node.dataLock.Unlock()
+		node.backupLock.Unlock()
+		var suc NodeInformation
+		err := node.RPCGetFirstSuccessor("", &suc)
+		if err != nil {
+			return err
+		}
+		RemoteCall(suc.Addr, "Node.BackupAdd", node.backup, nil)
+		node.backupLock.Lock()
+		node.backup = make(map[string]string)
+		node.backupLock.Unlock()
+		logrus.Info("ChangePredecessor:", node.Addr.Addr, " ", node.predecessor.Addr, " ", node.data, " ", node.backup)
+	}
+	return nil
+}
+
+func (node *Node) BackupAdd(backup map[string]string, _ *struct{}) error {
+	node.backupLock.Lock()
+	defer node.backupLock.Unlock()
+	for k, v := range backup {
+		node.backup[k] = v
 	}
 	return nil
 }
@@ -277,15 +307,32 @@ func (node *Node) RPCNotify(addr NodeInformation, _ *struct{}) error {
 		node.predecessor.Addr = addr.Addr
 		node.predecessor.HashId = gethash(node.predecessor.Addr)
 		node.predecessorLock.Unlock()
+		node.backupLock.Lock()
+		err := RemoteCall(node.predecessor.Addr, "Node.SetBackup", node.Addr.Addr, &node.backup)
+		node.backupLock.Unlock()
+		if err != nil {
+			return err
+		}
 		logrus.Info("[running] Notify running: ", node.Addr, node.predecessor, node.successorList)
 	}
 	return nil
 }
-
+func (node *Node) SetBackup(addr string, backup *(map[string]string)) error {
+	*backup = make(map[string]string)
+	node.dataLock.RLock()
+	defer node.dataLock.RUnlock()
+	for k, v := range node.data {
+		(*backup)[k] = v
+	}
+	logrus.Info("[SetBackup]node.back: ", addr, " ", node.Addr.Addr, " ", node.backup)
+	logrus.Info("[SetBackup]back: ", addr, " ", node.Addr.Addr, " ", backup)
+	return nil
+}
 func (node *Node) RPCGetFirstSuccessor(_ string, reply *NodeInformation) error {
 	for i := 0; i < successorSize; i++ {
 		if node.Ping(node.successorList[i].Addr) {
-			*reply = node.successorList[i]
+			(*reply).Addr = node.successorList[i].Addr
+			(*reply).HashId = gethash(reply.Addr)
 			logrus.Info("[Success]GetFirstSuccessor:", node.Addr, "->", i, "->", node.successorList[i])
 			return nil
 		}
@@ -304,7 +351,8 @@ func (node *Node) RPCGetSuccessor(_ string, reply *[successorSize]NodeInformatio
 func (node *Node) RPCGetPredecessor(_ string, reply *NodeInformation) error {
 	logrus.Info("[Lock]predecessorRLock:", node.Addr)
 	node.predecessorLock.RLock()
-	*reply = node.predecessor
+	(*reply).Addr = node.predecessor.Addr
+	(*reply).HashId = gethash(reply.Addr)
 	node.predecessorLock.RUnlock()
 	return nil
 }
@@ -317,7 +365,8 @@ func (node *Node) RPCFindSuccessor(addr NodeInformation, reply *NodeInformation)
 		return err
 	}
 	if in(node.Addr.HashId, suc.HashId, addr.HashId, false, true) {
-		*reply = suc
+		(*reply).Addr = suc.Addr
+		(*reply).HashId = gethash(reply.Addr)
 		return nil
 	}
 	err = node.RPCFindPredecessor(addr, &pre)
@@ -335,7 +384,8 @@ func (node *Node) RPCFindPredecessor(addr NodeInformation, reply *NodeInformatio
 		return err
 	}
 	if in(node.Addr.HashId, tempsuc.HashId, addr.HashId, false, true) {
-		*reply = node.Addr
+		(*reply).Addr = node.Addr.Addr
+		(*reply).HashId = gethash(reply.Addr)
 		return nil
 	}
 	var tar NodeInformation
@@ -358,19 +408,22 @@ func (node *Node) RPCFindPredecessor(addr NodeInformation, reply *NodeInformatio
 			return err
 		}
 	}
-	*reply = tar
+	(*reply).Addr = tar.Addr
+	(*reply).HashId = gethash(reply.Addr)
 	return nil
 }
 func (node *Node) RPCFindClosePrecedingFinger(addr NodeInformation, reply *NodeInformation) error {
 	node.tableLock.RLock()
 	defer node.tableLock.RUnlock()
 	for i := hashSize - 1; i >= 0; i-- {
-		if node.fingertable[i].Addr != "" && in(node.Addr.HashId, addr.HashId, node.fingertable[i].HashId, false, false) {
-			*reply = node.fingertable[i]
+		if node.fingertable[i].Addr != "" && in(node.Addr.HashId, addr.HashId, node.fingertable[i].HashId, false, false) && node.Ping(node.fingertable[i].Addr) {
+			(*reply).Addr = node.fingertable[i].Addr
+			(*reply).HashId = gethash((*reply).Addr)
 			return nil
 		}
 	}
-	*reply = node.Addr
+	(*reply).Addr = node.Addr.Addr
+	(*reply).HashId = gethash(reply.Addr)
 	return nil
 }
 func (node *Node) Ping(addr string) bool {
@@ -382,7 +435,6 @@ func (node *Node) Ping(addr string) bool {
 	}
 }
 func (node *Node) Join(addr string) (check bool) {
-	fmt.Println(node.Addr.Addr, addr)
 	if !node.Ping(addr) {
 		logrus.Error("[error] Join: addr shutdown", node.Addr.Addr, addr)
 		return false
@@ -413,8 +465,61 @@ func (node *Node) Join(addr string) (check bool) {
 		node.successorList[i].HashId = gethash(node.successorList[i].Addr)
 	}
 	node.successorLock.Unlock()
+	err = RemoteCall(reply.Addr, "Node.TransferData", node.Addr, &node.data)
+	if err != nil {
+		logrus.Error("[error] Transfer: ", node.Addr.Addr, " ", reply.Addr, " ", err)
+		return false
+	}
 	node.Mantain()
 	return true
+}
+
+func (node *Node) TransferData(pre NodeInformation, predata *(map[string]string)) error {
+	node.backupLock.Lock()
+	node.backup = make(map[string]string)
+	node.dataLock.Lock()
+	for k, v := range node.data {
+		if !in(pre.HashId, node.Addr.HashId, gethash(k), false, true) {
+			(*predata)[k] = v
+			node.backup[k] = v
+		}
+	}
+	node.dataLock.Unlock()
+	node.backupLock.Unlock()
+	node.DataSub("", predata)
+	var suc NodeInformation
+	node.RPCGetFirstSuccessor("", &suc)
+	err := RemoteCall(suc.Addr, "Node.BackupSub", "", predata)
+	if err != nil {
+		logrus.Error("[error] Transfer Backup")
+	}
+	node.predecessorLock.Lock()
+	node.predecessor.Addr = pre.Addr
+	node.predecessor.HashId = gethash(node.predecessor.Addr)
+	node.predecessorLock.Unlock()
+	return nil
+}
+func (node *Node) DataSub(_ string, data *(map[string]string)) error {
+	node.dataLock.Lock()
+	defer node.dataLock.Unlock()
+	for k, _ := range *data {
+		_, flag := node.data[k]
+		if flag {
+			delete(node.data, k)
+		}
+	}
+	return nil
+}
+func (node *Node) BackupSub(_ string, data *(map[string]string)) error {
+	node.backupLock.Lock()
+	defer node.backupLock.Unlock()
+	for k, _ := range *data {
+		_, flag := node.backup[k]
+		if flag {
+			delete(node.backup, k)
+		}
+	}
+	return nil
 }
 func (node *Node) Quit() {
 	if !node.online {
@@ -431,6 +536,7 @@ func (node *Node) Quit() {
 	logrus.Info("[Success] Quit: ", node.Addr.Addr)
 	node.quit = make(chan bool, 1)
 	logrus.Info("[Final] From: ", node.Addr.Addr, " Successor: ", node.successorList, " Predecessor: ", node.predecessor.Addr)
+	logrus.Info("[Data] ", node.Addr.Addr, " ", node.data)
 }
 func (node *Node) ForceQuit() {
 	if !node.online {
@@ -447,9 +553,129 @@ func (node *Node) ForceQuit() {
 	logrus.Info("[Success] Quit: ", node.Addr.Addr)
 	node.quit = make(chan bool, 1)
 }
-func (node *Node) Put(value string, key string) (check bool) { return }
-func (node *Node) Get(key string) (check bool, value string) { return }
-func (node *Node) Delete(key string) (check bool)            { return }
+func (node *Node) Put(key string, value string) (check bool) {
+	var suc NodeInformation
+	err := node.RPCFindSuccessor(NodeInformation{"", gethash(key)}, &suc)
+	if err != nil {
+		logrus.Error("[error] Put in RPCFindSuccessor: ", node.Addr.Addr, " ", key, " ", value, " ", err)
+		return false
+	}
+	err = RemoteCall(suc.Addr, "Node.Addindata", Pair{key, value}, nil)
+	if err != nil {
+		logrus.Error("[error] Put in Addindata: ", node.Addr.Addr, " ", key, " ", value, " ", err)
+		return false
+	}
+
+	logrus.Info("[Success] Put in Addindata: ", suc.Addr, " ", key, " ", value)
+	var sucsuc NodeInformation
+	err = RemoteCall(suc.Addr, "Node.RPCGetFirstSuccessor", "", &sucsuc)
+	if err != nil {
+		logrus.Error("[error] Put in RPCGetFirstSuccessor: ", node.Addr.Addr, " ", key, " ", value, " ", err)
+	} else {
+		err = RemoteCall(sucsuc.Addr, "Node.Addinbackup", Pair{key, value}, nil)
+		if err != nil {
+			logrus.Warnln("[warn] Put in Addinbackup: ", node.Addr.Addr, " ", key, " ", value, " ", err)
+		}
+	}
+
+	logrus.Info("[Success] Put in Addinbackup: ", sucsuc.Addr, " ", key, " ", value)
+	return true
+}
+func (node *Node) Addindata(pair Pair, _ *struct{}) error {
+	node.dataLock.Lock()
+	node.data[pair.Key] = pair.Value
+	node.dataLock.Unlock()
+	logrus.Info("[Addindata]: ", node.Addr.Addr, " ", node.data)
+	return nil
+}
+func (node *Node) Addinbackup(pair Pair, _ *struct{}) error {
+	node.backupLock.Lock()
+	node.backup[pair.Key] = pair.Value
+	node.backupLock.Unlock()
+	logrus.Info("[Addinbackup]: ", node.Addr.Addr, " ", node.backup)
+	return nil
+}
+func (node *Node) Get(key string) (check bool, value string) {
+	var suc NodeInformation
+	node.RPCFindSuccessor(NodeInformation{"", gethash(key)}, &suc)
+	var ret string
+	err := RemoteCall(suc.Addr, "Node.GetValue", key, &ret)
+	if err != nil {
+		check = false
+		value = ""
+
+	} else {
+		check = true
+		value = ret
+
+	}
+	return
+}
+func (node *Node) GetValue(key string, value *string) error {
+	node.dataLock.RLock()
+	defer node.dataLock.RUnlock()
+	v, flag := node.data[key]
+	if flag {
+		*value = v
+		return nil
+	} else {
+		*value = ""
+		return fmt.Errorf("[error] GetValue: %v %v", node.Addr.Addr, key)
+	}
+}
+func (node *Node) Delete(key string) (check bool) {
+	var suc NodeInformation
+	err := node.RPCFindSuccessor(NodeInformation{"", gethash(key)}, &suc)
+
+	if err != nil {
+		logrus.Error("[error] Del in RPCFindSuccessor: ", node.Addr.Addr, " ", key, " ", err)
+		return false
+	}
+	err = RemoteCall(suc.Addr, "Node.Delvalueindata", key, nil)
+	if err != nil {
+		logrus.Error("[error] Del in Delvalueindata: ", node.Addr.Addr, " ", key, " ", err)
+		return false
+	}
+
+	var sucsuc NodeInformation
+	err = RemoteCall(suc.Addr, "Node.RPCGetFirstSuccessor", "", &sucsuc)
+	if err != nil {
+		logrus.Error("[error] Del in RPCGetFirstSuccessor: ", suc.Addr, " ", key, " ", err)
+	} else {
+		err = RemoteCall(sucsuc.Addr, "Node.Delvalueinback", key, nil)
+		if err != nil {
+			logrus.Warnln("[warn] Del in Delvalueinback: ", sucsuc.Addr, " ", key, " ", err)
+		}
+	}
+
+	logrus.Info("[Success] Del: ", node.Addr.Addr, " ", key)
+	return true
+}
+func (node *Node) Delvalueindata(key string, _ *struct{}) error {
+	logrus.Info("[Delvalueindata]: ", node.data)
+	node.dataLock.Lock()
+	defer node.dataLock.Unlock()
+	_, flag := node.data[key]
+	if flag {
+		delete(node.data, key)
+		return nil
+	} else {
+		return fmt.Errorf("[error] Can't find key in data: %v %v", key, node.Addr.Addr)
+	}
+}
+
+func (node *Node) Delvalueinback(key string, _ *struct{}) error {
+	logrus.Info("[Delvalueinback]: ", node.backup)
+	node.backupLock.Lock()
+	defer node.backupLock.Unlock()
+	_, flag := node.backup[key]
+	if flag {
+		delete(node.backup, key)
+		return nil
+	} else {
+		return fmt.Errorf("[error] Can't find key in backup: %v %v", key, node.Addr.Addr)
+	}
+}
 func in(lhs, rhs, what *big.Int, closeleft, closeright bool) bool {
 	switch rhs.Cmp(lhs) {
 	case 1:
