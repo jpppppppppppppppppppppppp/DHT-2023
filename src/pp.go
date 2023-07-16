@@ -277,7 +277,9 @@ func (node *Node) ChangePredecessor() error {
 		if err != nil {
 			return err
 		}
+		node.backupLock.RLock()
 		RemoteCall(suc.Addr, "Node.BackupAdd", node.backup, nil)
+		node.backupLock.RUnlock()
 		node.backupLock.Lock()
 		node.backup = make(map[string]string)
 		node.backupLock.Unlock()
@@ -288,10 +290,10 @@ func (node *Node) ChangePredecessor() error {
 
 func (node *Node) BackupAdd(backup map[string]string, _ *struct{}) error {
 	node.backupLock.Lock()
-	defer node.backupLock.Unlock()
 	for k, v := range backup {
 		node.backup[k] = v
 	}
+	node.backupLock.Unlock()
 	return nil
 }
 
@@ -319,11 +321,10 @@ func (node *Node) RPCNotify(addr NodeInformation, _ *struct{}) error {
 func (node *Node) SetBackup(addr string, backup *(map[string]string)) error {
 	*backup = make(map[string]string)
 	node.dataLock.RLock()
-	defer node.dataLock.RUnlock()
 	for k, v := range node.data {
 		(*backup)[k] = v
 	}
-
+	node.dataLock.RUnlock()
 	return nil
 }
 func (node *Node) RPCGetFirstSuccessor(_ string, reply *NodeInformation) error {
