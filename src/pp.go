@@ -16,7 +16,7 @@ import (
 
 const (
 	PingwaitTime = 100 * time.Millisecond
-	MaintainTime = 20 * time.Millisecond
+	MaintainTime = 100 * time.Millisecond
 )
 
 func gethash(str string) *big.Int {
@@ -202,7 +202,7 @@ func (node *Node) Mantain() { //不知道写啥，只知道是每个周期都要
 	}()
 }
 func (node *Node) Stablize() error {
-	logrus.Info("[Before] Stablize: ", node.Addr, node.successorList, node.predecessor)
+
 	var suc, pre NodeInformation
 	node.RPCGetFirstSuccessor("", &suc)
 	err := RemoteCall(suc.Addr, "Node.RPCGetPredecessor", "", &pre)
@@ -210,7 +210,7 @@ func (node *Node) Stablize() error {
 		logrus.Error("[error] Stabilize error: ", err)
 		return err
 	}
-	succ := suc
+
 	if pre.Addr != "" && in(node.Addr.HashId, suc.HashId, pre.HashId, false, false) {
 		suc = pre
 	}
@@ -237,12 +237,12 @@ func (node *Node) Stablize() error {
 	if err != nil {
 		logrus.Error("[error] Stablize error: ", err)
 	}
-	logrus.Info("[running] Stablize: ", node.Addr, node.predecessor, node.successorList, succ, pre)
+
 	return err
 }
 
 func (node *Node) FixFinger() error {
-	logrus.Info("[Before] Finger fix: ", node.Addr, node.successorList, node.predecessor)
+
 	ind := node.fixing
 	var reply NodeInformation
 	temp := new(big.Int).Exp(base, big.NewInt(int64(ind)), nil)
@@ -257,7 +257,6 @@ func (node *Node) FixFinger() error {
 	if node.fixing == 160 {
 		node.fixing = 1
 	}
-	logrus.Info("[running] Finger fix: ", node.Addr, " ind: ", ind, " temp: ", tttemp, " reply: ", reply, node.successorList, node.predecessor)
 	return nil
 }
 
@@ -282,7 +281,7 @@ func (node *Node) ChangePredecessor() error {
 		node.backupLock.Lock()
 		node.backup = make(map[string]string)
 		node.backupLock.Unlock()
-		logrus.Info("ChangePredecessor:", node.Addr.Addr, " ", node.predecessor.Addr, " ", node.data, " ", node.backup)
+
 	}
 	return nil
 }
@@ -313,7 +312,7 @@ func (node *Node) RPCNotify(addr NodeInformation, _ *struct{}) error {
 		if err != nil {
 			return err
 		}
-		logrus.Info("[running] Notify running: ", node.Addr, node.predecessor, node.successorList)
+
 	}
 	return nil
 }
@@ -324,16 +323,18 @@ func (node *Node) SetBackup(addr string, backup *(map[string]string)) error {
 	for k, v := range node.data {
 		(*backup)[k] = v
 	}
-	logrus.Info("[SetBackup]node.back: ", addr, " ", node.Addr.Addr, " ", node.backup)
-	logrus.Info("[SetBackup]back: ", addr, " ", node.Addr.Addr, " ", backup)
+
 	return nil
 }
 func (node *Node) RPCGetFirstSuccessor(_ string, reply *NodeInformation) error {
+	node.successorLock.RLock()
+	defer node.successorLock.RUnlock()
 	for i := 0; i < successorSize; i++ {
+
 		if node.Ping(node.successorList[i].Addr) {
 			(*reply).Addr = node.successorList[i].Addr
 			(*reply).HashId = gethash(reply.Addr)
-			logrus.Info("[Success]GetFirstSuccessor:", node.Addr, "->", i, "->", node.successorList[i])
+
 			return nil
 		}
 	}
@@ -585,14 +586,14 @@ func (node *Node) Addindata(pair Pair, _ *struct{}) error {
 	node.dataLock.Lock()
 	node.data[pair.Key] = pair.Value
 	node.dataLock.Unlock()
-	logrus.Info("[Addindata]: ", node.Addr.Addr, " ", node.data)
+
 	return nil
 }
 func (node *Node) Addinbackup(pair Pair, _ *struct{}) error {
 	node.backupLock.Lock()
 	node.backup[pair.Key] = pair.Value
 	node.backupLock.Unlock()
-	logrus.Info("[Addinbackup]: ", node.Addr.Addr, " ", node.backup)
+
 	return nil
 }
 func (node *Node) Get(key string) (check bool, value string) {
@@ -652,7 +653,7 @@ func (node *Node) Delete(key string) (check bool) {
 	return true
 }
 func (node *Node) Delvalueindata(key string, _ *struct{}) error {
-	logrus.Info("[Delvalueindata]: ", node.data)
+
 	node.dataLock.Lock()
 	defer node.dataLock.Unlock()
 	_, flag := node.data[key]
@@ -665,7 +666,7 @@ func (node *Node) Delvalueindata(key string, _ *struct{}) error {
 }
 
 func (node *Node) Delvalueinback(key string, _ *struct{}) error {
-	logrus.Info("[Delvalueinback]: ", node.backup)
+
 	node.backupLock.Lock()
 	defer node.backupLock.Unlock()
 	_, flag := node.backup[key]
