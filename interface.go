@@ -22,10 +22,9 @@ type dhtNode interface {
 	// Quit the network without informing other nodes.
 	// "ForceQuit" will be checked by TA manually.
 	ForceQuit()
-
+	Check()
 	// Check whether the node identified by addr is in the network.
 	Ping(addr string) bool
-	Check() bool
 	// Put a key-value pair into the network (if key exists, update the value).
 	// Return "true" if success, "false" otherwise.
 	Put(key string, value string) bool

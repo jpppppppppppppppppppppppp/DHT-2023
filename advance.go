@@ -189,6 +189,7 @@ func quitAndStabilizeTest() (bool, int, int) {
 		} else {
 			putInfo.success()
 		}
+		fmt.Println("Put")
 	}
 	putInfo.finish(&QASFailedCnt, &QASTotalCnt)
 

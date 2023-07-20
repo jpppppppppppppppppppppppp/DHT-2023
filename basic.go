@@ -65,7 +65,6 @@ func basicTest() (bool, int, int) {
 			fmt.Println("join")
 		}
 		joinInfo.finish(&basicFailedCnt, &basicTotalCnt)
-
 		time.Sleep(basicTestAfterJoinQuitSleepTime)
 
 		/* Put, part 1. */
@@ -130,9 +129,8 @@ func basicTest() (bool, int, int) {
 					delete1Info.success()
 				}
 
-				break		
+				break
 			}
-			fmt.Println("delete")
 		}
 		delete1Info.finish(&basicFailedCnt, &basicTotalCnt)
 
@@ -214,7 +212,6 @@ func basicTest() (bool, int, int) {
 
 				break
 			}
-			fmt.Println("delete")
 		}
 		delete2Info.finish(&basicFailedCnt, &basicTotalCnt)
 	}

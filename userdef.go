@@ -1,7 +1,7 @@
 package main
 
 import (
-	"dht/src"
+	"dht/kademlia"
 )
 
 /*
@@ -12,7 +12,7 @@ import (
 
 func NewNode(port int) dhtNode {
 	// Todo: create a node and then return it.
-	node := new(src.Node)
+	node := new(kademlia.Node)
 	node.Init(portToAddr(localAddress, port))
 	return node
 }
