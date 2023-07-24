@@ -21,7 +21,7 @@ const (
 	RepublishSleep     = 100 * time.Millisecond
 	ExpireSleep        = 100 * time.Millisecond
 	hashSize       int = 160
-	K              int = 40
+	K              int = 45
 	alpha          int = 5
 )
 

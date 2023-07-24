@@ -62,7 +62,6 @@ func basicTest() (bool, int, int) {
 
 			time.Sleep(basicTestJoinQuitSleepTime)
 			nextJoinNode++
-			fmt.Println("join")
 		}
 		joinInfo.finish(&basicFailedCnt, &basicTotalCnt)
 		time.Sleep(basicTestAfterJoinQuitSleepTime)
@@ -84,7 +83,6 @@ func basicTest() (bool, int, int) {
 			} else {
 				put1Info.success()
 			}
-			fmt.Println("put")
 		}
 		put1Info.finish(&basicFailedCnt, &basicTotalCnt)
 
@@ -108,7 +106,6 @@ func basicTest() (bool, int, int) {
 			if get1Cnt == basicTestRoundGetSize {
 				break
 			}
-			fmt.Println("get")
 		}
 		get1Info.finish(&basicFailedCnt, &basicTotalCnt)
 
@@ -143,7 +140,6 @@ func basicTest() (bool, int, int) {
 			nodesInNetwork = removeFromArray(nodesInNetwork, idxInArray)
 
 			time.Sleep(basicTestJoinQuitSleepTime)
-			fmt.Println("quit")
 		}
 		green.Printf("Quit (round %d) passed.\n", t)
 		time.Sleep(basicTestAfterJoinQuitSleepTime)
@@ -165,7 +161,6 @@ func basicTest() (bool, int, int) {
 			} else {
 				put2Info.success()
 			}
-			fmt.Println("put")
 		}
 		put2Info.finish(&basicFailedCnt, &basicTotalCnt)
 
@@ -189,7 +184,6 @@ func basicTest() (bool, int, int) {
 			if get2Cnt == basicTestRoundGetSize {
 				break
 			}
-			fmt.Println("get")
 		}
 		get2Info.finish(&basicFailedCnt, &basicTotalCnt)
 
