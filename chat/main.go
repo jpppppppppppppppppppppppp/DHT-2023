@@ -51,7 +51,7 @@ func main() {
 		time.Sleep(300 * time.Millisecond)
 		fmt.Println(user.dhtNode.Seed)
 	}
-	fmt.Printf("%c[1;40;32mConnecting to Peerchat", 0x1B)
+	fmt.Printf("%c[3;40;32mConnecting to Peerchat", 0x1B)
 	time.Sleep(300 * time.Millisecond)
 	fmt.Printf(".")
 	time.Sleep(300 * time.Millisecond)
