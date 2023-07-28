@@ -33,4 +33,4 @@ netsh interface portproxy add v4tov4 listenport=8888 listenaddress=0.0.0.0 conne
 
 进入程序后依次输入自己的Bindaddr和Nameaddr即可。
 
-加入已存在的网络需要创建人的Nameaddr。
+加入已存在的网络需要任何一个已在网络中的Nameaddr。
