@@ -176,7 +176,7 @@ func (node *Node) Check() bool {
 	}
 	return true
 }
-func (node *Node) Mantain() { //不知道写啥，只知道是每个周期都要干的事情
+func (node *Node) Mantain() {
 	go func() {
 		for node.online {
 			time.Sleep(MaintainTime)
